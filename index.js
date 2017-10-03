@@ -1,20 +1,72 @@
-var http = require('http');
-var requestify = require('requestify');
-var Promise = require('bluebird');
-var fs = require('fs');
+const fs = require('fs');
 const request = require('request-promise');
+const _ = require('lodash');
 
 var host = 'https://realskill-backend.herokuapp.com';
-// var host = 'http://127.0.0.1:3000';
 var token = '133600dd9b96f09e706d8493c9bd2e54';
+
+function lastSuccess(arr) {
+    'use strict';
+    return _.findLastIndex(arr, (o) => { return "SUCCESS" === o.status})
+}
+function lastFailed(arr) {
+    'use strict';
+    return _.findLastIndex(arr, (o) => { return "FAILED" === o.status})
+}
+
 
 function buildHtml(data)
 {
     var tableBody = '';
+    _.forEach(data, (o) => {
+        'use strict';
+        let last = _.last(o.consistencyVerifications);
+        const lastIndex = o.consistencyVerifications.length -1;
+        if("FAILED" === last.status){
+            o.currentStatus = "FAILED";
+            o.previousOpositeStatusIndex = lastSuccess(o.consistencyVerifications);
+        } else {
+            o.currentStatus = "SUCCESS";
+            o.previousOpositeStatusIndex = lastFailed(o.consistencyVerifications);
+        }
+        let count = lastIndex - o.previousOpositeStatusIndex;
+        if(o.consistencyVerifications.length === count){
+            o.differenceCount = -1;
+        } else {
+            o.differenceCount = count;
+        }
+    });
+
     data.forEach(function (val)
     {
-        tableBody += '<tr><td>' + val.id + '</td><td>' + val.title + '</td><td>' + val.consistencyVerifications.slice(-1)[0].fail_reason + '</td>' +
-                '<td>' + val.consistencyVerifications.slice(-1)[0].start_date + '</td><td>' + val.consistencyVerifications.slice(-1)[0].verified_date + '</td></tr>\n'
+        tableBody += '<tr><td rowspan="2">' +
+                val.id +
+                '</td><td rowspan="2">' +
+                val.title +
+                '</td><td style="background-color: '+ ("FAILED" === val.currentStatus ? "#f38787" : "#7bef7b")+';">' +
+                        val.currentStatus +
+                '</td><td>' +
+                val.consistencyVerifications.slice(-1)[0].fail_reason +
+                '</td>' +
+                '<td>' +
+                val.consistencyVerifications.slice(-1)[0].start_date +
+                '</td><td>' +
+                val.consistencyVerifications.slice(-1)[0].verified_date +
+                '</td>' +
+                '<td>' +
+                val.consistencyVerifications.slice(-1)[0].push_date +
+                '</td></tr>' +
+                '<tr>' +
+                '<td style="background-color: '+ ("FAILED" === val.currentStatus ? "#7bef7b" : "#f38787")+';">' +
+                ("FAILED" === val.currentStatus ? "Last Success result diffrence: " + (-1 !== val.differenceCount ? val.differenceCount : "NOT AVAILABLE")
+                        : "Last Failed result diffrence: "+ (-1 !==val.differenceCount ? val.differenceCount : "NOT AVAILABLE")) +
+                '</td><td>' + (-1 !== val.previousOpositeStatusIndex ? val.consistencyVerifications[val.previousOpositeStatusIndex].fail_reason : null) +
+                '</td><td>' + (-1 !== val.previousOpositeStatusIndex ? val.consistencyVerifications[val.previousOpositeStatusIndex].start_date : null ) +
+                '</td><td>' + (-1 !== val.previousOpositeStatusIndex ? val.consistencyVerifications[val.previousOpositeStatusIndex].verified_date : null) +
+                '</td><td>' + (-1 !== val.previousOpositeStatusIndex ? val.consistencyVerifications[val.previousOpositeStatusIndex].push_date : null) +
+                '</td>' +
+                '</tr>' +
+                '</tr>\n'
     });
     return `
 <html>
@@ -28,6 +80,7 @@ function buildHtml(data)
 <tr>
 <th>ID</th>
 <th>Title</th>
+<th>Status</th>
 <th>Reason</th>
 <th>Start Date</th>
 <th>Verified Date</th>
@@ -63,12 +116,14 @@ request(options).then((response) =>
     return request(options)
 }).then((response) =>
 {
-    // console.log(response.results);
     let failed = [];
     response.results.map((obj) =>
     {
         if (obj.repositoryUrl && obj.solutionRepositoryUrl && obj.consistencyVerifications) {
-            if (obj.consistencyVerifications.slice(-1)[0].status === "FAILED") {
+            if (2 > obj.consistencyVerifications.length && "FAILED" === obj.consistencyVerifications.slice(-1)[0].status) {
+                failed.push(obj);
+            }
+            else if ("FAILED" === obj.consistencyVerifications.slice(-1)[0].status || "FAILED" === obj.consistencyVerifications.slice(-2, -1)[0].status) {
                 failed.push(obj);
             }
         }
@@ -79,7 +134,6 @@ request(options).then((response) =>
     stream.once('open', function (fd)
     {
         const html = buildHtml(failed);
-
         stream.end(html);
     });
 
